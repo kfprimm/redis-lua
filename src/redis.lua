@@ -560,6 +560,30 @@ do
         request.multibulk(client, 'punsubscribe')
     end
 
+    local consumer_tick = function(client)
+        return function()
+            local message
+            local response = response.read(client)
+
+            if response[1] == 'pmessage' then
+                message = {
+                    kind    = response[1],
+                    pattern = response[2],
+                    channel = response[3],
+                    payload = response[4],
+                }
+            else
+                message = {
+                    kind    = response[1],
+                    channel = response[2],
+                    payload = response[3],
+                }
+            end
+
+            return message
+        end
+    end
+
     local consumer_loop = function(client)
         local aborting, subscriptions = false, 0
 
@@ -571,25 +595,11 @@ do
             end
         end
 
+        tick = consumer_tick(client)
+
         return coroutine.wrap(function()
             while true do
-                local message
-                local response = response.read(client)
-
-                if response[1] == 'pmessage' then
-                    message = {
-                        kind    = response[1],
-                        pattern = response[2],
-                        channel = response[3],
-                        payload = response[4],
-                    }
-                else
-                    message = {
-                        kind    = response[1],
-                        channel = response[2],
-                        payload = response[3],
-                    }
-                end
+                message = tick()
 
                 if string.match(message.kind, '^p?subscribe$') then
                     subscriptions = subscriptions + 1
@@ -606,7 +616,11 @@ do
         end)
     end
 
-    client_prototype.pubsub = function(client, subscriptions)
+    client_prototype.pubsub = function(client, subscriptions, loop)
+        if loop == nil then
+          loop = true
+        end
+
         if type(subscriptions) == 'table' then
             if subscriptions.subscribe then
                 subscribe(client, channels(subscriptions.subscribe))
@@ -615,7 +629,12 @@ do
                 psubscribe(client, channels(subscriptions.psubscribe))
             end
         end
-        return consumer_loop(client)
+
+        if loop then
+            return consumer_loop(client)
+        else
+            return consumer_tick(client)
+        end
     end
 end
 
